@@ -166,3 +166,56 @@ live feed every 30s ─▶ match ─▶ find_departures ─▶ INSERT ... ON CON
 - **Secrets:** `.env` stays on your Mac. Compose reads it and passes values in as environment
   variables when a container starts. They're never baked into the image.
 - **Restart policy:** `restart: unless-stopped` brings a crashed container back automatically.
+
+## Phase 5: Split into separate services
+
+**What we built:**
+- `delays.py`: the delay logic (matching + departure detection + memory of each trip), moved
+  out of `track_delays.py` into a class `DelayCalculator` that doesn't care how reports arrive.
+- `ingester.py`: fetches the feed every 30s and publishes each vehicle report to Redpanda.
+  No schedule and no database, so it's small and rarely breaks.
+- `processor.py`: reads reports from Redpanda, runs `DelayCalculator`, and saves to Postgres.
+- `stream.py`: shared Redpanda settings (topic name, partitions, 24h retention).
+- `track_delays.py` is gone; its job is now split between the ingester and the processor.
+
+**How data flows:**
+
+```
+Metro feed ─▶ ingester ──produce──▶ Redpanda topic "vehicle-positions" ──consume──▶ processor ─▶ Postgres
+              (every 30s)           3 partitions, keyed by trip_id,               DelayCalculator
+                                    messages kept 24h on disk                     (last_seen memory)
+```
+
+**What went wrong with the simple version (ingester POSTs straight to processor), measured:**
+- Processor down for 90s → about 880 reports thrown away, and the minutes around it had
+  missing or thin data.
+- After a restart the processor had forgotten every bus, so its first batch saved nothing.
+- Processor slow (40s per batch) → the ingester timed out and *thought* the data was lost,
+  but the processor had actually saved it. Sender and receiver disagreed about what happened.
+- The ingester had to wait for the processor, so a slow processor slowed down fetching too.
+
+**How Redpanda fixed it, measured:**
+- Processor down for 3 minutes → reports piled up in Redpanda, and on restart it read all
+  2,421 of them. Every minute of the outage has data.
+- Redpanda itself down for 70s → the ingester held reports in memory and delivered them all
+  when it came back (0 failed).
+
+**Key ideas:**
+- **Message stream / log:** an append-only list of messages stored on disk. Producers add to
+  the end. Each consumer reads at its own pace and keeps its own place (an *offset* = position
+  number). Reading doesn't delete anything; messages expire after the retention time (24h).
+- **Decoupling:** the ingester and processor never talk directly. Either can be down, slow, or
+  restarted without the other noticing. The stream in the middle is a buffer, like a mailbox.
+- **Topic, partition, key:** a topic is a named stream. It's split into partitions so several
+  processors can share the work. Messages with the same key (our `trip_id`) always go to the
+  same partition, so each trip's reports stay in order.
+- **Consumer group:** processors with the same `group.id` split the partitions between them.
+  Add a second processor and Redpanda hands it some partitions automatically.
+- **Replay + idempotency:** on startup the processor asks the database how far it got, then
+  re-reads 3 minutes before that to rebuild `last_seen`. Anything saved twice is dropped by the
+  primary key, so re-reading is safe. The retained stream also lets us re-run everything with
+  improved logic later.
+- **Let it crash:** if Redpanda is down, the processor crashes at startup, and Docker's restart
+  policy brings it back until Redpanda is reachable. No special retry code is needed.
+- **Lag** ("reports waiting") = messages in the stream not yet processed. It's the #1 health
+  number for a stream-based system (Phase 8).

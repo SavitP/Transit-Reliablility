@@ -1,5 +1,8 @@
 # Runs the whole system with one command:  docker compose up -d
 # Compose reads .env automatically, so ${POSTGRES_PASSWORD} is filled in from there.
+#
+#   ingester ──▶ redpanda (topic "vehicle-positions") ──▶ processor ──▶ db
+#   (fetches)    (holds messages until they're read)       (delays)     (stores)
 
 services:
   db:
@@ -19,20 +22,57 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redpanda:
+    image: redpandadata/redpanda:v26.2.3
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container            # sensible settings for a single-machine setup
+      - --smp=1                         # use 1 CPU core
+      - --memory=1G
+      # Two "doors": one for containers on the Compose network, one for your Mac.
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      # The address each door tells clients to use when they reconnect.
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "127.0.0.1:19092:19092"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data   # messages survive restarts too
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+
   ingester:
     build: .
+    command: ["python", "ingester.py"]
     environment:
-      # Inside the Compose network the database is reachable by its service name, "db",
-      # on its normal port 5432. (localhost:5433 only works from your Mac.)
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  processor:
+    build: .
+    command: ["python", "processor.py"]
+    environment:
+      # Inside the Compose network each service is reachable by its name ("db", "redpanda").
       DATABASE_URL: postgresql://transit:${POSTGRES_PASSWORD}@db:5432/transit
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
     volumes:
       - schedule-cache:/app/data        # keep the downloaded schedule between restarts
     depends_on:
       db:
-        condition: service_healthy      # wait until the healthcheck passes, not just "started"
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   db-data:
-    name: transit-db-data               # reuse the volume from Phase 3, so no data is lost
+    name: transit-db-data               # the same volume since Phase 3, so no data is lost
   schedule-cache:
+  redpanda-data:

@@ -27,4 +27,5 @@ COPY --chown=app:app *.py schema.sql ./
 RUN mkdir data && chown app:app data
 USER app
 
-CMD ["python", "track_delays.py"]
+# The same image runs both services; docker-compose.yml picks which script with `command:`.
+CMD ["python", "processor.py"]
