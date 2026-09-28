@@ -24,6 +24,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN useradd --create-home app
 WORKDIR /app
 COPY --chown=app:app *.py schema.sql ./
+COPY --chown=app:app static ./static
 RUN mkdir data && chown app:app data
 USER app
 

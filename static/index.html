@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Metro Reliability</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <a href="#/" class="brand">Metro Reliability</a>
+    <nav><a href="#/">Search</a> <a href="#/worst">Worst routes</a></nav>
+  </header>
+
+  <div class="search">
+    <input id="search" type="search" placeholder="Route number or stop name, e.g. 7 or Pike St"
+           autocomplete="off" aria-label="Search routes and stops">
+    <div id="results" class="results" hidden></div>
+  </div>
+
+  <main id="page"></main>
+
+  <footer>King County Metro data. "On time" = no more than 1 min early or 5 min late.</footer>
+  <script src="app.js"></script>
+</body>
+</html>

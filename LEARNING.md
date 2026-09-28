@@ -219,3 +219,46 @@ Metro feed ─▶ ingester ──produce──▶ Redpanda topic "vehicle-positi
   policy brings it back until Redpanda is reachable. No special retry code is needed.
 - **Lag** ("reports waiting") = messages in the stream not yet processed. It's the #1 health
   number for a stream-based system (Phase 8).
+
+## Phase 6: API and website
+
+**What we built:**
+- `api.py`: a FastAPI web server with 4 JSON endpoints (`/api/search`, `/api/routes/{id}`,
+  `/api/stops/{id}`, `/api/worst-routes`). It also serves the website files.
+- `static/` (`index.html`, `style.css`, `app.js`): a website with no framework. It fetches JSON
+  from the API and builds the pages in the browser: search, route/stop pages (on-time by hour,
+  by day, and a day × hour grid), and "worst routes."
+- `route_hourly`: a TimescaleDB *continuous aggregate* (an hourly summary per route that updates
+  itself every 10 minutes). "Worst routes" went from 1.1s to 0.03s on a week of test data.
+- A 5th container, `api`, at http://localhost:8000.
+
+**How data flows (one page view):**
+
+```
+Browser                          api container                          db container
+───────                          ─────────────                          ────────────
+GET localhost:8000/        ──▶   serve static/index.html, app.js
+app.js runs, reads #/route/100001
+fetch /api/routes/100001?days=7 ─▶ route_reliability()
+                                  borrow connection from pool ──SQL──▶  stop_departures
+                                  add up rows, build JSON     ◀─rows──  (index on route_id)
+◀── JSON ────────────────────────
+app.js turns JSON into HTML (bars, grid, table)
+```
+
+**Key ideas:**
+- **API:** a set of URLs that return data (JSON) instead of pages. The website is just one
+  user of it; a phone app or a script could use the same URLs.
+- **Client vs. server:** the server (FastAPI) knows the database; the client (JavaScript in the
+  browser) knows how to draw. They only share JSON.
+- **Connection pool:** keep a few database connections open and lend them to requests, instead
+  of opening a new one each time.
+- **Validation:** FastAPI checks inputs against the rules we declare (`days` from 1 to 90), and
+  rejects bad ones before our code runs.
+- **Never build HTML or SQL by pasting in text.** SQL uses `%(name)s` placeholders; HTML uses
+  `esc()`. Both stop outside text from being treated as code (SQL injection, XSS).
+- **Measure, then optimize:** most queries were fast enough with indexes (0.04s). Only
+  "worst routes" needed a pre-computed summary, and we proved it by testing on 2.5M fake rows first.
+- **Continuous aggregates trade detail for speed:** the summary stores counts and sums, so it
+  can give an *average* delay but not a *median*. The route and stop pages still read raw rows
+  so they can show medians.

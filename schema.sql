@@ -55,6 +55,32 @@ CREATE INDEX IF NOT EXISTS stop_departures_stop_idx  ON stop_departures (stop_id
 ALTER TABLE stop_departures SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'route_id',
-    timescaledb.compress_orderby   = 'scheduled_departure DESC'
+    -- The primary key's other columns go here too, so duplicate checks stay fast on compressed data.
+    timescaledb.compress_orderby   = 'scheduled_departure DESC, trip_id, stop_sequence'
 );
 SELECT add_compression_policy('stop_departures', INTERVAL '14 days', if_not_exists => TRUE);
+
+-- ---------------------------------------------------------------------------
+-- A continuous aggregate: an hourly summary per route that TimescaleDB keeps up to date.
+-- "Worst routes this week" reads ~140 routes x 168 hours = ~24k summary rows
+-- instead of ~2.5 million individual departures.
+-- ---------------------------------------------------------------------------
+CREATE MATERIALIZED VIEW IF NOT EXISTS route_hourly
+WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 hour', scheduled_departure)                  AS hour,
+       route_id,
+       count(*)                                                     AS departures,
+       count(*) FILTER (WHERE delay_seconds BETWEEN -60 AND 300)   AS on_time,
+       count(*) FILTER (WHERE delay_seconds > 300)                 AS late,
+       sum(delay_seconds)                                           AS total_delay_s
+FROM stop_departures
+GROUP BY 1, 2
+WITH NO DATA;
+
+-- Every 10 minutes, recompute any hours whose departures changed, up to 30 minutes ago.
+-- (start_offset NULL = look all the way back, so late-arriving data is never missed.)
+SELECT add_continuous_aggregate_policy('route_hourly',
+    start_offset => NULL,
+    end_offset => INTERVAL '30 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => TRUE);

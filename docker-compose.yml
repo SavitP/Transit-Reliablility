@@ -1,8 +1,8 @@
 # Runs the whole system with one command:  docker compose up -d
 # Compose reads .env automatically, so ${POSTGRES_PASSWORD} is filled in from there.
 #
-#   ingester ──▶ redpanda (topic "vehicle-positions") ──▶ processor ──▶ db
-#   (fetches)    (holds messages until they're read)       (delays)     (stores)
+#   ingester ──▶ redpanda (topic "vehicle-positions") ──▶ processor ──▶ db ◀── api ◀── your browser
+#   (fetches)    (holds messages until they're read)       (delays)     (stores)  (answers questions)
 
 services:
   db:
@@ -69,6 +69,20 @@ services:
         condition: service_healthy
       redpanda:
         condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build: .
+    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: postgresql://transit:${POSTGRES_PASSWORD}@db:5432/transit
+    ports:
+      - "127.0.0.1:8000:8000"           # open http://localhost:8000 in your browser
+    depends_on:
+      db:
+        condition: service_healthy
+      processor:
+        condition: service_started      # the processor creates the tables on startup
     restart: unless-stopped
 
 volumes:
