@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import psycopg
+import psycopg.sql
 from dotenv import load_dotenv
 
 from schedule import Schedule
@@ -55,3 +56,21 @@ def save_departures(conn: psycopg.Connection, rows: list[dict]) -> int:
             returning=False,
         )
         return cur.rowcount
+
+
+def ensure_api_reader(conn: psycopg.Connection, password: str) -> None:
+    """Create (or update) a database user that can only READ, for the public API.
+
+    If a bug ever let someone send their own SQL through the API, this user still couldn't
+    change or delete anything. Safe to call on every startup.
+    """
+    exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'api_reader'").fetchone()
+    # A role's password can't be passed as a normal %s parameter, so it's quoted safely instead.
+    action = "ALTER" if exists else "CREATE"
+    conn.execute(psycopg.sql.SQL("{} ROLE api_reader WITH LOGIN PASSWORD {}").format(
+        psycopg.sql.SQL(action), psycopg.sql.Literal(password)))
+    conn.execute(psycopg.sql.SQL("GRANT CONNECT ON DATABASE {} TO api_reader").format(
+        psycopg.sql.Identifier(conn.info.dbname)))
+    conn.execute("GRANT USAGE ON SCHEMA public TO api_reader")
+    conn.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO api_reader")  # includes route_hourly
+    conn.execute("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC")

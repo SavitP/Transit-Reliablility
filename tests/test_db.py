@@ -2,7 +2,10 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from db import create_schema, save_departures
+from tests.conftest import refresh_route_hourly
 
 T = datetime(2026, 9, 28, 15, 0, tzinfo=timezone.utc)
 
@@ -35,3 +38,22 @@ def test_saving_the_same_departure_twice_keeps_one_row(db):
 def test_table_is_a_hypertable(db):
     names = db.execute("SELECT hypertable_name FROM timescaledb_information.hypertables").fetchall()
     assert ("stop_departures",) in names
+
+
+def test_api_reader_can_read_but_not_write(db, db_url):
+    import psycopg
+    from db import ensure_api_reader
+
+    ensure_api_reader(db, "test-reader-pw")
+    ensure_api_reader(db, "test-reader-pw")   # running it again must be fine (every startup)
+    save_departures(db, [departure()])
+    refresh_route_hourly(db)
+
+    host_part = db_url.split("@", 1)[1]
+    with psycopg.connect(f"postgresql://api_reader:test-reader-pw@{host_part}", autocommit=True) as reader:
+        assert reader.execute("SELECT count(*) FROM stop_departures").fetchone()[0] == 1
+        reader.execute("SELECT count(*) FROM route_hourly").fetchone()   # the summary view too
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            reader.execute("DELETE FROM stop_departures")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            reader.execute("INSERT INTO routes VALUES ('X', 'X', 'X')")

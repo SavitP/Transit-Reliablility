@@ -76,3 +76,15 @@ def test_worst_routes_ranks_least_on_time_first(client, db):
 def test_website_is_served(client):
     response = client.get("/")
     assert response.status_code == 200 and "Metro Reliability" in response.text
+
+
+def test_health_ok_when_departures_are_recent(client, db):
+    add_departures(db, "R1", [0], hours_ago=0.1)
+    response = client.get("/api/health")
+    assert response.status_code == 200 and response.json()["status"] == "ok"
+
+
+def test_health_fails_when_pipeline_is_stale(client, db):
+    assert client.get("/api/health").status_code == 503              # no data at all
+    add_departures(db, "R1", [0], hours_ago=3)
+    assert client.get("/api/health").json()["status"] == "stale"     # data, but 3 hours old

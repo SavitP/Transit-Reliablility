@@ -1,12 +1,13 @@
 """Processor: read vehicle reports from Redpanda, calculate delays, save them to Postgres."""
 
 import json
+import os
 import time
 from datetime import timedelta
 
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, Consumer, TopicPartition
 
-from db import connect, create_schema, load_reference_data, save_departures
+from db import connect, create_schema, ensure_api_reader, load_reference_data, save_departures
 from delays import DelayCalculator, matches_schedule
 from metrics import processor_metrics, serve_metrics
 from schedule import Schedule, ensure_schedule_downloaded
@@ -22,6 +23,8 @@ def main() -> None:
     schedule = Schedule(ensure_schedule_downloaded())
     conn = connect()
     create_schema(conn)
+    if os.environ.get("API_DB_PASSWORD"):   # set in production; the API then logs in as api_reader
+        ensure_api_reader(conn, os.environ["API_DB_PASSWORD"])
     load_reference_data(conn, schedule)
     calculator = DelayCalculator(schedule)
     ensure_topic()

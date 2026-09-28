@@ -1,0 +1,50 @@
+# Production changes, layered on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# - Use the image GitHub Actions built and tested, instead of building on the server.
+# - Put Caddy in front: the only service reachable from the internet, with HTTPS.
+# - The API logs into the database as a read-only user.
+
+services:
+  ingester:
+    build: !reset null               # don't build on the server...
+    image: ghcr.io/savitp/transit-reliablility:${IMAGE_TAG:-latest}   # ...download CI's tested image
+
+  processor:
+    build: !reset null               # don't build on the server...
+    image: ghcr.io/savitp/transit-reliablility:${IMAGE_TAG:-latest}   # ...download CI's tested image
+    environment:
+      API_DB_PASSWORD: ${API_DB_PASSWORD:?Set API_DB_PASSWORD in .env}   # creates the read-only user
+
+  api:
+    build: !reset null               # don't build on the server...
+    image: ghcr.io/savitp/transit-reliablility:${IMAGE_TAG:-latest}   # ...download CI's tested image
+    environment:
+      DATABASE_URL: postgresql://api_reader:${API_DB_PASSWORD}@db:5432/transit
+    ports: !reset []                 # not published; only Caddy talks to it
+
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.11.4
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. transit.example.com}
+    ports:
+      - "80:80"                      # plain HTTP: only used to redirect to HTTPS and prove we own the domain
+      - "443:443"                    # HTTPS
+      - "443:443/udp"                # HTTP/3 (a faster version of HTTPS, used automatically when available)
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data             # certificates: must survive restarts, or we'd re-request them each time
+      - caddy-config:/config
+    depends_on:
+      - api
+      - grafana
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

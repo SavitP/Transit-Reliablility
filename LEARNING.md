@@ -359,3 +359,43 @@ processor ─┘      ▲
 - **Alerts need `for:`** so a single slow moment doesn't wake anyone up.
 - **Gotchas we hit:** shared metric definitions made each service report the other's metrics
   (stuck at 0), and a labeled counter (`result="error"`) shows "no data" until it's created.
+
+## Phase 9: Put it online (part 1: prepared and rehearsed)
+
+**What we built:**
+- `docker-compose.prod.yml`: production changes layered on the normal Compose file. It uses
+  CI's published image instead of building, adds **Caddy** (the only public service: HTTPS on
+  443, redirect on 80), unpublishes the API/Grafana ports, and gives the API a read-only login.
+- `deploy/Caddyfile`: two sites (`DOMAIN` → API/website, `grafana.DOMAIN` → Grafana), automatic
+  Let's Encrypt certificates, compression, and security headers.
+- `api_reader`: a database user that can only `SELECT`. The processor creates it on startup.
+- `/api/health`: returns 503 if the database is unreachable or nothing was saved in the last
+  hour. It's meant for an outside uptime checker.
+- `deploy/server-setup.sh` (secure a fresh Ubuntu server + install Docker), `deploy/update.sh`
+  (deploy the newest version), `deploy/backup.sh` (daily database dump, 7 days kept), and `DEPLOY.md`.
+- CI builds the image for both Intel/AMD and ARM processors.
+- Rehearsed on the Mac with `DOMAIN=localhost`: redirect, HTTPS, headers, read-only API user,
+  and closed ports all checked. The backup was restored into a scratch database with identical counts.
+
+**What happens when someone opens https://transit.example.com:**
+
+```
+1. DNS       browser asks "what IP is transit.example.com?" → resolver → ... → your A record → 203.0.113.10
+2. TCP       browser opens a connection to 203.0.113.10 port 443 (firewall allows 443)
+3. TLS       Caddy shows its Let's Encrypt certificate; the browser checks it and they agree on encryption keys
+4. HTTP      encrypted "GET /" → Caddy → (Docker network) api:8000 → index.html back the same way
+5. Page      browser loads app.js → fetch("/api/...") repeats steps 4 (reusing the connection)
+             → FastAPI → api_reader → Postgres → JSON → drawn on screen
+```
+
+**Key ideas:**
+- **Reverse proxy:** one front door (Caddy) that receives every request and forwards it to the
+  right service. The services themselves stay private.
+- **HTTPS/TLS:** encrypts traffic and proves the server is really yours. The proof is a
+  certificate signed by a trusted authority (Let's Encrypt, free). Caddy gets and renews it
+  automatically by showing Let's Encrypt it controls the domain.
+- **Least privilege:** each piece gets only the access it needs: read-only DB user for the API,
+  no public ports except 80/443, no root SSH, keys instead of passwords.
+- **Build once, deploy the same thing:** the server runs the exact image CI tested, instead of
+  rebuilding (which could produce something slightly different).
+- **A backup only counts once you've restored it.**

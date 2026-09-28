@@ -8,7 +8,7 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -109,6 +109,24 @@ def reliability(filter_sql: str, params: dict) -> dict:
         "grid": [{"day": DAY_NAMES[c["dow"] - 1], "hour": c["hour"], "departures": c["n"],
                   "pct_on_time": pct(c["on_time"], c["n"])} for c in cells],
     }
+
+
+HEALTHY_WITHIN_SECONDS = 60 * 60  # even at 3am some buses run, so an hour with no departures means trouble
+
+
+@app.get("/api/health")
+def health(response: Response):
+    """For an outside uptime checker. Fails (503) if the database is unreachable OR no new
+    departures were saved recently, so it catches a stalled pipeline, not just a dead website."""
+    try:
+        age = query("SELECT extract(epoch FROM now() - max(departed_at)) AS age FROM stop_departures")[0]["age"]
+    except Exception:
+        response.status_code = 503
+        return {"status": "database unreachable"}
+    if age is None or age > HEALTHY_WITHIN_SECONDS:
+        response.status_code = 503
+        return {"status": "stale", "newest_departure_age_seconds": age}
+    return {"status": "ok", "newest_departure_age_seconds": round(age)}
 
 
 @app.get("/api/search")

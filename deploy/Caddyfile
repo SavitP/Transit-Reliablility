@@ -1,0 +1,20 @@
+# Caddy: the front door. It's the only thing reachable from the internet (ports 80 and 443).
+# For each site below it automatically gets an HTTPS certificate from Let's Encrypt,
+# renews it before it expires, and passes requests on to the right container.
+# {$DOMAIN} is filled in from the DOMAIN setting in .env.
+
+{$DOMAIN} {
+	encode zstd gzip                 # compress responses so pages load faster
+	header {
+		Strict-Transport-Security "max-age=31536000"   # browsers: only ever use HTTPS for this site
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server                                        # don't advertise what software we run
+	}
+	reverse_proxy api:8000           # the website + API
+}
+
+grafana.{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy grafana:3000       # the monitoring dashboard (has its own login)
+}
