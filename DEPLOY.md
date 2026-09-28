@@ -17,7 +17,7 @@ Budget about an hour the first time.
 ## 1. Create the server
 
 In your provider's dashboard, create a server with **Ubuntu 24.04**, and paste your public key
-where it asks for an SSH key. Note the **IPv4 address** it gets (e.g. `203.0.113.10`).
+where it asks for an SSH key. Note the **IPv4 address** it gets (something like `5.75.123.45`; every example below says `YOUR_SERVER_IP` where it goes).
 
 **On AWS Lightsail:** choose the Ubuntu 24.04 blueprint and the 4 GB plan. Lightsail gives you a
 key to download (or lets you upload yours). Then:
@@ -35,29 +35,29 @@ At your domain registrar, add two **A records**:
 
 | Name (host)  | Type | Value (points to)  |
 |--------------|------|--------------------|
-| `transit`    | A    | `203.0.113.10`     |
-| `grafana.transit` | A | `203.0.113.10`   |
+| `transit`    | A    | `YOUR_SERVER_IP`     |
+| `grafana.transit` | A | `YOUR_SERVER_IP`   |
 
 (Use `@` and `grafana` instead if the site should live at the bare domain.)
 Check it worked (can take a few minutes): `dig +short transit.example.com` should print the IP.
 
-**No domain?** Use `203-0-113-10.sslip.io` as your domain (your IP with dashes). sslip.io is a
+**No domain?** Use `YOUR-IP-WITH-DASHES.sslip.io` as your domain (your IP with dashes). sslip.io is a
 free service that answers any such name with the IP inside it, and Caddy can get a real
-certificate for it. Grafana would be `grafana.203-0-113-10.sslip.io`.
+certificate for it. Grafana would be `grafana.YOUR-IP-WITH-DASHES.sslip.io`.
 
 ## 3. Secure the server and install Docker
 
 From your Mac, in the project folder:
 ```bash
-ssh root@203.0.113.10 'bash -s' < deploy/server-setup.sh            # Hetzner, DigitalOcean
-ssh ubuntu@203.0.113.10 'sudo bash -s' < deploy/server-setup.sh     # AWS Lightsail / EC2
+ssh root@YOUR_SERVER_IP 'bash -s' < deploy/server-setup.sh            # Hetzner, DigitalOcean
+ssh ubuntu@YOUR_SERVER_IP 'sudo bash -s' < deploy/server-setup.sh     # AWS Lightsail / EC2
 ```
 (If Lightsail gave you a downloaded key, add `-i ~/Downloads/LightsailDefaultKey-us-west-2.pem`,
 after `chmod 600` on that file.)
 This creates the `transit` user, turns off password logins, sets up the firewall and automatic
 security updates, adds swap, and installs Docker. From now on:
 ```bash
-ssh transit@203.0.113.10
+ssh transit@YOUR_SERVER_IP
 ```
 
 ## 4. Get the code and create the secrets file
@@ -116,7 +116,7 @@ Add this line (runs at 3:15am server time every day):
 ```
 Backups go to `~/backups/`, and the last 7 days are kept. They live on the same server, so also
 turn on the provider's backups (step 1) or copy them off now and then:
-`scp transit@203.0.113.10:backups/*.dump ~/transit-backups/`
+`scp transit@YOUR_SERVER_IP:backups/*.dump ~/transit-backups/`
 
 **Restoring** a backup into an empty database (tested; TimescaleDB needs the pre/post steps):
 ```bash
@@ -139,6 +139,6 @@ That URL fails if the site is down *or* no new departures arrived for an hour.
 | Deploy the newest version (after CI is green) | `./deploy/update.sh` |
 | See what's running | `docker compose ps` |
 | Read logs | `docker compose logs --tail 50 processor` |
-| Open Prometheus (not public) | on your Mac: `ssh -L 9090:localhost:9090 transit@203.0.113.10`, then open http://localhost:9090 |
+| Open Prometheus (not public) | on your Mac: `ssh -L 9090:localhost:9090 transit@YOUR_SERVER_IP`, then open http://localhost:9090 |
 | Query the database | `docker compose exec db psql -U transit -d transit` |
 | Disk space | `df -h /` and `docker system df` |

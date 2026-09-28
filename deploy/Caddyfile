@@ -4,17 +4,17 @@
 # {$DOMAIN} is filled in from the DOMAIN setting in .env.
 
 {$DOMAIN} {
-	encode zstd gzip                 # compress responses so pages load faster
+	encode zstd gzip # compress responses so pages load faster
 	header {
-		Strict-Transport-Security "max-age=31536000"   # browsers: only ever use HTTPS for this site
+		Strict-Transport-Security "max-age=31536000" # browsers: only ever use HTTPS for this site
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
-		-Server                                        # don't advertise what software we run
+		-Server # don't advertise what software we run
 	}
-	reverse_proxy api:8000           # the website + API
+	reverse_proxy api:8000 # the website + API
 }
 
 grafana.{$DOMAIN} {
 	encode zstd gzip
-	reverse_proxy grafana:3000       # the monitoring dashboard (has its own login)
+	reverse_proxy grafana:3000 # the monitoring dashboard (has its own login)
 }

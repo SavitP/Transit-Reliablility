@@ -47,6 +47,12 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: dummy
         run: docker compose config --quiet
 
+      - name: Check Caddyfile is valid and formatted
+        run: >-
+          docker run --rm -e DOMAIN=example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2.11.4 sh -c "caddy validate --config /etc/caddy/Caddyfile &&
+          caddy fmt /etc/caddy/Caddyfile | diff /etc/caddy/Caddyfile -"
+
       - name: Check Prometheus config and alert rules
         run: >-
           docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro"

@@ -399,3 +399,28 @@ processor ─┘      ▲
 - **Build once, deploy the same thing:** the server runs the exact image CI tested, instead of
   rebuilding (which could produce something slightly different).
 - **A backup only counts once you've restored it.**
+
+## Phase 9 (part 2): Live at https://transitreliability.com
+
+**What we did:** a Hetzner CX23 server (2 vCPU, 4 GB, Germany, ~€7/month with backups),
+secured with `deploy/server-setup.sh`, running the production Compose setup. Domain
+`transitreliability.com` from Porkbun, with a real Let's Encrypt certificate that Caddy renews
+by itself. Checked from outside: HTTPS works, `/api/health` is ok, and every port except 80/443 is closed.
+
+**What went wrong on the way, and what it taught:**
+- **Example IP used literally:** `203.0.113.x` is reserved for documentation and doesn't exist
+  on the internet, so SSH timed out. Placeholders should look like placeholders (`YOUR_SERVER_IP`).
+- **Registrar parking records:** a new domain comes with default DNS records pointing at the
+  registrar's placeholder page (Porkbun: an ALIAS for the bare domain and a `*` wildcard CNAME).
+  Let's Encrypt followed them to Porkbun, not our server, and both challenge types failed.
+  Fix: delete the defaults, add A records to the server's IP, and check with
+  `dig +short NAME @1.1.1.1` before asking for a certificate.
+- **MX records are email only.** They never affect a website or HTTPS.
+- **Caddy handled the failures well:** it retried with growing waits and switched to Let's
+  Encrypt's *staging* service, so failures didn't use up the real service's rate limit.
+  `docker compose restart caddy` retries immediately once DNS is fixed.
+
+**Now:** the server runs everything by itself (Docker starts on boot; `restart: unless-stopped`
+brings services back). The Mac is only for writing code: push → CI tests and builds →
+`./deploy/update.sh` on the server. CI also checks the Caddyfile, since a broken one would
+take the whole site offline.
