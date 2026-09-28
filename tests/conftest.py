@@ -7,6 +7,7 @@ for one just by naming it as an argument, and pytest builds it and passes it in.
 import csv
 import io
 import os
+import time
 import zipfile
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def write_gtfs(path: Path, stop_times: list[tuple[str, str, int, str]]) -> Path:
                                        [[s, f"Stop {s}", "47.6", "-122.3"] for s in stop_ids]))
         z.writestr("stop_times.txt", to_csv(
             ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"],
-            [[trip, time, time, stop, seq] for trip, time, seq, stop in stop_times]))
+            [[trip, t, t, stop, seq] for trip, t, seq, stop in stop_times]))
     return path
 
 
@@ -96,5 +97,24 @@ def db(db_url):
     """A connection to an empty test database with our schema, cleaned before each test."""
     with psycopg.connect(db_url, autocommit=True) as conn:
         create_schema(conn)
+        # Pause TimescaleDB's background jobs (summary refresh, compression). Tests decide
+        # when things happen; a job running on its own schedule could collide with a test.
+        conn.execute("SELECT alter_job(job_id, scheduled => false) "
+                     "FROM timescaledb_information.jobs WHERE job_id >= 1000")
         conn.execute("TRUNCATE stop_departures, routes, stops")
         yield conn
+
+
+def refresh_route_hourly(conn) -> None:
+    """Update the route_hourly summary now, waiting if a background refresh is mid-run.
+
+    A brand-new database starts its refresh job the moment the schema creates it, before
+    the fixture above can pause it. Two refreshes of the same hours can't run at once.
+    """
+    for _ in range(20):
+        try:
+            conn.execute("CALL refresh_continuous_aggregate('route_hourly', NULL, now())")
+            return
+        except psycopg.errors.LockNotAvailable:
+            time.sleep(0.5)
+    raise TimeoutError("route_hourly stayed locked by another refresh for 10 seconds")

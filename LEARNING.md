@@ -305,3 +305,12 @@ you: git push ──▶ GitHub ──▶ job "test": fresh Linux machine + fresh
   the same pipeline also produces the ready-to-run artifact (our Docker image).
 - **A clean machine every run** catches "works on my machine" problems: a missing package in
   requirements, a file not committed, something depending on your `.env`.
+
+**What CI caught on its very first run:** a *race condition* (two things happening at the same
+time and colliding). On a brand-new database, TimescaleDB starts the `route_hourly` refresh job
+immediately. In CI, that job was still running when a test triggered its own refresh, and
+TimescaleDB refused the second one (`LockNotAvailable`). It never showed up on the Mac, because
+there the job had first run long ago. Fix: the test database pauses background jobs, and the
+test's refresh waits and retries if one is mid-run. We reproduced the collision on purpose
+(old code failed 11/15 times, new code 0/15) instead of just hoping it was fixed.
+Lesson: "passes on my machine" isn't proof; a clean machine exposes timing and setup differences.

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from db import save_departures
+from tests.conftest import refresh_route_hourly
 
 
 @pytest.fixture
@@ -66,7 +67,7 @@ def test_worst_routes_ranks_least_on_time_first(client, db):
     # (That also means the live "worst routes" page never includes the current hour.)
     add_departures(db, "R1", [0] * 100, hours_ago=4)               # 100% on time
     add_departures(db, "R2", [0] * 40 + [600] * 60, hours_ago=4)   # 40% on time
-    db.execute("CALL refresh_continuous_aggregate('route_hourly', NULL, now())")
+    refresh_route_hourly(db)
     ranking = client.get("/api/worst-routes").json()
     assert [r["short_name"] for r in ranking] == ["44", "7"]
     assert ranking[0]["pct_on_time"] == 40.0
