@@ -9,9 +9,11 @@ import time
 from confluent_kafka import Producer
 
 from fetch_vehicles import VEHICLE_POSITIONS_URL, decode_feed, download_feed, extract_vehicles
+from metrics import ingester_metrics, serve_metrics
 from stream import BOOTSTRAP_SERVERS, TOPIC, ensure_topic, stop_on_sigterm
 
 POLL_SECONDS = 30
+METRICS = ingester_metrics()
 
 failed_deliveries = 0
 
@@ -21,9 +23,11 @@ def on_delivery(err, msg) -> None:
     global failed_deliveries
     if err is not None:
         failed_deliveries += 1
+        METRICS.publish_failures.inc()
 
 
 def main() -> None:
+    serve_metrics()
     ensure_topic()
     producer = Producer({
         "bootstrap.servers": BOOTSTRAP_SERVERS,
@@ -35,11 +39,15 @@ def main() -> None:
 
     while True:
         try:
-            vehicles = extract_vehicles(decode_feed(download_feed(VEHICLE_POSITIONS_URL)))
+            feed = decode_feed(download_feed(VEHICLE_POSITIONS_URL))
         except Exception as e:
+            METRICS.feed_fetches.labels(result="error").inc()
             print(f"Fetch failed, will retry: {e}", flush=True)
             time.sleep(POLL_SECONDS)
             continue
+        METRICS.feed_fetches.labels(result="ok").inc()
+        METRICS.feed_timestamp.set(feed.header.timestamp)
+        vehicles = extract_vehicles(feed)
 
         for v in vehicles:
             producer.produce(
@@ -50,6 +58,7 @@ def main() -> None:
                 timestamp=v["timestamp"] * 1000,   # when the bus reported, in milliseconds
                 on_delivery=on_delivery,
             )
+        METRICS.reports_published.inc(len(vehicles))
         # If Redpanda is down, messages wait in memory here and are retried automatically.
         unsent = producer.flush(10)
         print(f"published {len(vehicles)} reports "

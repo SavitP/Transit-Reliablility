@@ -44,7 +44,14 @@ jobs:
       - name: Check docker-compose.yml is valid
         env:
           POSTGRES_PASSWORD: dummy
+          GRAFANA_ADMIN_PASSWORD: dummy
         run: docker compose config --quiet
+
+      - name: Check Prometheus config and alert rules
+        run: >-
+          docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro"
+          --entrypoint promtool prom/prometheus:v3.15.0
+          check config /etc/prometheus/prometheus.yml
 
   build:
     needs: test                         # only build if every test passed

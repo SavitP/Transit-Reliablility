@@ -314,3 +314,48 @@ there the job had first run long ago. Fix: the test database pauses background j
 test's refresh waits and retries if one is mid-run. We reproduced the collision on purpose
 (old code failed 11/15 times, new code 0/15) instead of just hoping it was fixed.
 Lesson: "passes on my machine" isn't proof; a clean machine exposes timing and setup differences.
+
+## Phase 8: Watching the system
+
+**What we built:**
+- `metrics.py`: the measurements each service exposes. The ingester and processor each run a
+  tiny web page (`:9100/metrics`) listing their current numbers.
+- **Prometheus** (http://localhost:9090) collects those numbers every 15s, keeps 30 days,
+  and checks 4 alert rules (`monitoring/prometheus/alerts.yml`): a service down, a stale feed,
+  the processor falling behind, and a low match rate.
+- **Grafana** (http://localhost:3000, user `admin`, password in `.env`) with a pre-built
+  "Transit pipeline health" dashboard, set up from files (`monitoring/grafana/`).
+- CI now also checks the Prometheus config and alert rules with `promtool`.
+
+**How data flows:**
+
+```
+ingester  ─┐ /metrics (plain text, current values)
+processor ─┘      ▲
+                  │ every 15s: "what are your numbers?"   (Prometheus *pulls*)
+             Prometheus ── stores every value with a timestamp (30 days)
+                  │   └── checks alert rules every 15s → Alerts page
+                  ▼
+               Grafana ── asks Prometheus questions (PromQL) → draws the dashboard
+```
+
+**The three numbers asked for:**
+- **How far behind:** `time() - transit_feed_timestamp_seconds` (feed age) and
+  `time() - transit_processor_last_report_timestamp_seconds` (processor lag), plus
+  `transit_processor_messages_behind` (messages waiting in Redpanda).
+- **Events per second:** `rate(transit_reports_published_total[2m])` and the processed version.
+- **Match rate:** `rate(matched) / rate(in_service)`, normally around 97–100%.
+
+**Key ideas:**
+- **Logs vs. metrics:** logs are a diary of events; metrics are numbers tracked over time.
+  When we froze the processor, its last log line still said everything was fine, and Docker
+  still said "Up". Only the metric (Prometheus couldn't reach it) caught it, and the alert fired.
+- **Counter / Gauge / Histogram:** a counter only goes up (total reports); `rate()` turns it
+  into "per second". A gauge goes up and down (messages waiting). A histogram counts values
+  into buckets, so you can ask "95% of writes took less than X".
+- **Export timestamps, not ages:** we export *when* the last feed was made, and compute the
+  age at query time. If the ingester dies, the age keeps growing and the alert fires. An
+  exported "age" would freeze at its last value and look fine.
+- **Alerts need `for:`** so a single slow moment doesn't wake anyone up.
+- **Gotchas we hit:** shared metric definitions made each service report the other's metrics
+  (stuck at 0), and a labeled counter (`result="error"`) shows "no data" until it's created.

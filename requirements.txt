@@ -7,3 +7,4 @@ confluent-kafka==2.15.1
 fastapi==0.141.1
 uvicorn[standard]==0.54.0
 psycopg-pool==3.3.3
+prometheus-client==0.26.0

@@ -1,0 +1,8 @@
+# Tells Grafana where to get data, so you don't have to click through setup screens.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true

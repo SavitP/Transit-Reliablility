@@ -1,0 +1,35 @@
+# Conditions that mean "a human should look at this". Prometheus checks them every 15s.
+# `for:` = the condition must stay true this long before the alert fires (ignores brief blips).
+groups:
+  - name: transit
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        annotations:
+          summary: "{{ $labels.job }} is not answering Prometheus"
+
+      - alert: FeedStale
+        # We haven't downloaded a feed newer than 5 minutes. Metro's feed is broken,
+        # or our ingester is stuck. Fires even if the ingester crashed silently.
+        expr: time() - transit_feed_timestamp_seconds > 300
+        for: 2m
+        annotations:
+          summary: "Newest feed is {{ $value | humanizeDuration }} old"
+
+      - alert: ProcessorFallingBehind
+        # The newest report the processor has handled is more than 5 minutes old.
+        expr: time() - transit_processor_last_report_timestamp_seconds > 300
+        for: 5m
+        annotations:
+          summary: "Processor is {{ $value | humanizeDuration }} behind"
+
+      - alert: LowMatchRate
+        # Usually ~97%. A big drop usually means Metro published a new schedule we
+        # haven't downloaded yet, so trip IDs no longer match.
+        expr: |
+          sum(rate(transit_reports_matched_total[15m]))
+            / sum(rate(transit_reports_in_service_total[15m])) < 0.8
+        for: 15m
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of buses match the schedule"

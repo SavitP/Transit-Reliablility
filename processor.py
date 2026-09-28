@@ -7,15 +7,18 @@ from datetime import timedelta
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, Consumer, TopicPartition
 
 from db import connect, create_schema, load_reference_data, save_departures
-from delays import DelayCalculator
+from delays import DelayCalculator, matches_schedule
+from metrics import processor_metrics, serve_metrics
 from schedule import Schedule, ensure_schedule_downloaded
 from stream import BOOTSTRAP_SERVERS, TOPIC, ensure_topic, stop_on_sigterm
 
 REWIND = timedelta(minutes=3)   # how far to re-read on startup, to rebuild memory of each bus
-STATUS_EVERY_SECONDS = 30
+METRICS = processor_metrics()
+STATUS_EVERY_SECONDS = 15   # also how often we update the "messages behind" measurement
 
 
 def main() -> None:
+    serve_metrics()
     schedule = Schedule(ensure_schedule_downloaded())
     conn = connect()
     create_schema(conn)
@@ -55,6 +58,7 @@ def main() -> None:
     print("Waiting for vehicle reports. Ctrl+C to stop.", flush=True)
 
     processed, saved, last_status = 0, 0, time.time()
+    newest_report = 0   # bus report time of the newest message we've processed
     try:
         while True:
             messages = consumer.consume(num_messages=500, timeout=1.0)
@@ -63,13 +67,27 @@ def main() -> None:
                 if msg.error():
                     print(f"Stream error: {msg.error()}", flush=True)
                     continue
-                rows.extend(calculator.process(json.loads(msg.value())))
+                report = json.loads(msg.value())
+                METRICS.reports_processed.inc()
+                if report["trip_id"]:
+                    METRICS.reports_in_service.inc()
+                    if matches_schedule(schedule, report):
+                        METRICS.reports_matched.inc()
+                newest_report = max(newest_report, report["timestamp"])
+                rows.extend(calculator.process(report))
+            if newest_report:   # stays unset until the first message, instead of reporting 0 (1970)
+                METRICS.last_report_timestamp.set(newest_report)
             processed += len(messages)
-            saved += save_departures(conn, rows)
+            with METRICS.db_write_seconds.time():
+                new_rows = save_departures(conn, rows)
+            METRICS.departures_saved.inc(new_rows)
+            saved += new_rows
 
             if time.time() - last_status >= STATUS_EVERY_SECONDS:
+                behind = messages_behind(consumer)
+                METRICS.messages_behind.set(behind)
                 print(f"processed {processed} reports, saved {saved} departures, "
-                      f"{messages_behind(consumer)} reports waiting", flush=True)
+                      f"{behind} reports waiting", flush=True)
                 processed, saved, last_status = 0, 0, time.time()
     finally:
         consumer.close()   # tell Redpanda we're leaving, so partitions are handed off quickly

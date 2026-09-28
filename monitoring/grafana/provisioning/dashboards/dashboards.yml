@@ -1,0 +1,8 @@
+# Load every dashboard JSON file in /etc/grafana/dashboards when Grafana starts.
+apiVersion: 1
+providers:
+  - name: transit
+    folder: Transit
+    type: file
+    options:
+      path: /etc/grafana/dashboards
