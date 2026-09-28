@@ -1,0 +1,38 @@
+# Runs the whole system with one command:  docker compose up -d
+# Compose reads .env automatically, so ${POSTGRES_PASSWORD} is filled in from there.
+
+services:
+  db:
+    image: timescale/timescaledb:2.30.1-pg17
+    environment:
+      POSTGRES_USER: transit
+      POSTGRES_DB: transit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5433:5432"          # so psql on your Mac can still reach it
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:                        # "is the database ready for connections yet?"
+      test: ["CMD", "pg_isready", "-U", "transit", "-d", "transit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  ingester:
+    build: .
+    environment:
+      # Inside the Compose network the database is reachable by its service name, "db",
+      # on its normal port 5432. (localhost:5433 only works from your Mac.)
+      DATABASE_URL: postgresql://transit:${POSTGRES_PASSWORD}@db:5432/transit
+    volumes:
+      - schedule-cache:/app/data        # keep the downloaded schedule between restarts
+    depends_on:
+      db:
+        condition: service_healthy      # wait until the healthcheck passes, not just "started"
+    restart: unless-stopped
+
+volumes:
+  db-data:
+    name: transit-db-data               # reuse the volume from Phase 3, so no data is lost
+  schedule-cache:

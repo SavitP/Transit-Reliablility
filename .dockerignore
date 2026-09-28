@@ -1,0 +1,12 @@
+# Things that must never go into the image.
+# (Comments must be on their own line in this file.)
+
+# Secrets: passed in when the container starts instead
+.env
+# Your Mac's Python packages; the image builds its own for Linux
+.venv/
+# Downloaded schedule and old CSVs
+data/
+.git/
+__pycache__/
+*.pyc

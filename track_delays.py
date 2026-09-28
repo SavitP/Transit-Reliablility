@@ -4,6 +4,7 @@ Run:  python track_delays.py      (Ctrl+C to stop)
 Results are saved to the stop_departures table in Postgres.
 """
 
+import signal
 import time
 from datetime import datetime, timezone
 
@@ -103,7 +104,13 @@ def main() -> None:
         time.sleep(POLL_SECONDS)
 
 
+def _stop_on_sigterm(signum, frame):
+    # "docker stop" sends SIGTERM. Treat it like Ctrl+C so we exit cleanly and quickly.
+    raise KeyboardInterrupt
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _stop_on_sigterm)
     try:
         main()
     except KeyboardInterrupt:

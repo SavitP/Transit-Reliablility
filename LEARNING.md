@@ -83,7 +83,7 @@ programs can't safely write to it at once. Restarting the tracker loses `last_se
 ## Phase 3: A real database
 
 **What we built:**
-- A Postgres + TimescaleDB database running on your Mac (started with `./start_db.sh`).
+- A Postgres + TimescaleDB database (first started with a `start_db.sh` script, replaced by Docker Compose in Phase 4).
 - `schema.sql`: the table design (`routes`, `stops`, `stop_departures`).
 - `db.py`: connecting to the database, creating tables, and saving rows.
 - `track_delays.py` now writes to the database instead of `data/delays.csv`.
@@ -120,3 +120,49 @@ live feed every 30s ─▶ match ─▶ find_departures ─▶ INSERT ... ON CON
   are needed, with fake values. The code reads secrets from environment variables.
 - **Watch for survivorship bias:** departures scheduled in the *future* only appear if the bus
   left early. Recent time buckets therefore look too early until the late buses show up.
+
+## Phase 4: Docker
+
+**What we built:**
+- `Dockerfile`: a two-stage recipe that packages the tracker into an image (303 MB, down from
+  1.54 GB with a single stage).
+- `.dockerignore`: keeps `.env`, `.venv`, `data/`, and `.git` out of the image.
+- `docker-compose.yml`: runs the database and the tracker (the "ingester") together with one command.
+- `track_delays.py` now exits cleanly when Docker asks it to stop.
+
+**How data flows:**
+
+```
+ Your Mac
+ ├── .env ──(Compose fills in ${POSTGRES_PASSWORD})──┐
+ │                                                   ▼
+ │   ┌──────────── Compose network "transit-reliablility_default" ────────────┐
+ │   │  ingester container                     db container                   │
+ │   │  python track_delays.py ──"db:5432"──▶  Postgres + TimescaleDB         │
+ │   │  /app/data ◀─ volume: schedule-cache    /var/lib/postgresql/data       │
+ │   └──────────────────────────────────────────────── ▲ ─────────────────────┘
+ │                                                     │ volume: transit-db-data
+ └── psql / your tools ──"localhost:5433"──────────────┘ (port published to your Mac only)
+         │
+ Internet: Metro's feed + schedule (the ingester downloads them directly)
+```
+
+**Key ideas:**
+- **Image vs. container:** an image is a frozen, read-only package (the recipe baked into a
+  meal kit). A container is a running copy of an image (the meal being cooked). You can run
+  many containers from one image, and deleting a container doesn't touch the image.
+- **Dockerfile:** step-by-step instructions to build an image. Each step is a cached *layer*,
+  so ordering matters: copy `requirements.txt` and install packages *before* copying code,
+  and code changes rebuild in seconds.
+- **Multi-stage build:** build in a big image that has compilers, then copy only the finished
+  result into a slim image. The build tools, caches, and leftovers never ship.
+- **Compose:** describes several containers, their settings, and how they connect, in one file.
+  `docker compose up -d` starts everything, and `docker compose down` removes the containers.
+- **Volumes:** a container's own files disappear when the container is deleted. A volume is
+  storage kept *outside* the container and plugged in. That's why the database survives `down`/`up`.
+- **Networking:** Compose puts the services on a private network where each is reachable by
+  its service name (`db`). `localhost` inside a container means *that container itself*.
+  `ports:` opens a door from your Mac into a container (`localhost:5433` → `db:5432`).
+- **Secrets:** `.env` stays on your Mac. Compose reads it and passes values in as environment
+  variables when a container starts. They're never baked into the image.
+- **Restart policy:** `restart: unless-stopped` brings a crashed container back automatically.
