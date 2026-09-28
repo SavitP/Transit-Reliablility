@@ -262,3 +262,46 @@ app.js turns JSON into HTML (bars, grid, table)
 - **Continuous aggregates trade detail for speed:** the summary stores counts and sums, so it
   can give an *average* delay but not a *median*. The route and stop pages still read raw rows
   so they can show medians.
+
+## Phase 7: Tests and automatic checks
+
+**What we built:**
+- `tests/fixtures/`: three real feed snapshots (30s apart) and a schedule trimmed to just
+  those trips (~300 KB total). `tests/make_fixtures.py` recaptures them if ever needed.
+- 38 tests in `tests/`:
+  - **unit tests** (no database, no internet): schedule time math incl. daylight saving,
+    feed decoding, matching rules, departure detection, the calculator's memory, and an
+    end-to-end run on the real snapshots.
+  - **integration tests** (real TimescaleDB): schema, duplicate protection, the generated
+    delay column, and every API endpoint via FastAPI's test client.
+- `pytest.ini`, `requirements-dev.txt` (test-only packages, kept out of the Docker image).
+- A separate `transit_test` database. The tests refuse to run on any database not ending in `_test`.
+- `.github/workflows/ci.yml`: on every push, GitHub runs all the tests against a fresh
+  TimescaleDB, checks the Compose file, and builds the Docker image. On `main` it also
+  publishes the image to `ghcr.io`.
+
+**How it flows:**
+
+```
+you: git push ──▶ GitHub ──▶ job "test": fresh Linux machine + fresh TimescaleDB
+                                 install packages → pytest (38 tests) → compose file check
+                                     │ all green?
+                                     ▼
+                             job "build": docker build (multi-stage, cached layers)
+                                     │ on main only
+                                     ▼
+                             push image → ghcr.io/savitp/transit-reliablility:latest + :<commit>
+```
+
+**Key ideas:**
+- **Tests use recorded data**, so they give the same answer every time. Live data changes every
+  30s, so a test against it could fail for reasons unrelated to your code.
+- **Unit vs. integration tests:** unit tests check one piece alone and are instant; integration
+  tests check pieces working together (code + real database) and are slower but catch more.
+- **Regression test:** a test written for a bug you already fixed, so it can never come back
+  (e.g. the daylight-saving bug from Phase 2). We proved the tests work by putting bugs back in.
+- **CI (continuous integration):** a machine runs your checks on every push, so broken code is
+  caught within minutes, before it reaches `main` or a server. **CD (continuous delivery):**
+  the same pipeline also produces the ready-to-run artifact (our Docker image).
+- **A clean machine every run** catches "works on my machine" problems: a missing package in
+  requirements, a file not committed, something depending on your `.env`.
