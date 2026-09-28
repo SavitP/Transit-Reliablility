@@ -16,6 +16,12 @@ services:
     environment:
       API_DB_PASSWORD: ${API_DB_PASSWORD:?Set API_DB_PASSWORD in .env}   # creates the read-only user
 
+  notifier:
+    build: !reset null
+    image: ghcr.io/savitp/transit-reliablility:${IMAGE_TAG:-latest}
+    environment:
+      SITE_URL: https://${DOMAIN}
+
   api:
     build: !reset null               # don't build on the server...
     image: ghcr.io/savitp/transit-reliablility:${IMAGE_TAG:-latest}   # ...download CI's tested image

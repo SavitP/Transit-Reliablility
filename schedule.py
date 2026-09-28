@@ -68,13 +68,25 @@ class Schedule:
                 for r in _read_csv(zf, "stops.txt")
             }
 
+            # trip_id -> {"route_id": ..., "headsign": "Rainier Beach"} (where the bus says it's going)
+            self.trips = {
+                r["trip_id"]: {"route_id": r["route_id"], "headsign": r.get("trip_headsign") or ""}
+                for r in _read_csv(zf, "trips.txt")
+            }
+
             # trip_id -> {stop_sequence: (stop_id, scheduled departure in seconds since service-day start)}
             self.stop_times: dict[str, dict[int, tuple[str, int]]] = {}
+            # Every (route, stop) pair that exists: which stops each route serves. Used to check
+            # that an alert subscription makes sense ("Route 7 doesn't stop there").
+            self.route_stops: set[tuple[str, str]] = set()
             for r in _read_csv(zf, "stop_times.txt"):
                 self.stop_times.setdefault(r["trip_id"], {})[int(r["stop_sequence"])] = (
                     r["stop_id"],
                     gtfs_time_to_seconds(r["departure_time"]),
                 )
+                trip = self.trips.get(r["trip_id"])
+                if trip:
+                    self.route_stops.add((trip["route_id"], r["stop_id"]))
         print(f"Loaded schedule: {len(self.routes)} routes, {len(self.stop_times):,} trips "
               f"in {time.time() - started:.1f}s")
 

@@ -84,3 +84,55 @@ SELECT add_continuous_aggregate_policy('route_hourly',
     end_offset => INTERVAL '30 minutes',
     schedule_interval => INTERVAL '10 minutes',
     if_not_exists => TRUE);
+
+-- ---------------------------------------------------------------------------
+-- Commute alerts (Phase 10)
+-- ---------------------------------------------------------------------------
+
+-- Which stops each route serves (from the schedule). Lets the API reject
+-- "alert me about Route 7 at a stop Route 7 never visits".
+CREATE TABLE IF NOT EXISTS route_stops (
+    route_id TEXT NOT NULL,
+    stop_id  TEXT NOT NULL,
+    PRIMARY KEY (route_id, stop_id)
+);
+
+-- "Tell me when Route 7 at 3rd & Pike is 10+ min late, weekdays 7-9am."
+-- There are no user accounts: the random id is the key to manage it, and the
+-- random topic is where ntfy delivers it. Both are unguessable, like a password.
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    topic             TEXT NOT NULL UNIQUE,
+    route_id          TEXT NOT NULL REFERENCES routes,
+    stop_id           TEXT NOT NULL REFERENCES stops,
+    days              SMALLINT[] NOT NULL,     -- ISO weekdays: 1 = Monday ... 7 = Sunday
+    window_start      TIME NOT NULL,           -- Seattle local time, compared against when the
+    window_end        TIME NOT NULL,           --   bus is scheduled at the rider's stop
+    threshold_minutes SMALLINT NOT NULL DEFAULT 10 CHECK (threshold_minutes BETWEEN 3 AND 60),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (window_start < window_end),
+    CHECK (cardinality(days) BETWEEN 1 AND 7 AND days <@ ARRAY[1,2,3,4,5,6,7]::SMALLINT[])
+);
+
+-- Every notification we decide to send. The processor writes a row; the notifier sends it
+-- and records the result. (This "write it down first, send it separately" pattern is
+-- called an outbox: if ntfy is down, nothing is lost; the notifier retries later.)
+CREATE TABLE IF NOT EXISTS alerts (
+    id              BIGSERIAL PRIMARY KEY,
+    subscription_id UUID NOT NULL REFERENCES subscriptions ON DELETE CASCADE,
+    trip_id         TEXT,                  -- NULL for "send a test notification"
+    service_date    DATE,
+    delay_seconds   INTEGER,
+    expected_at     TIMESTAMPTZ,           -- when the bus should now reach the rider's stop
+    title           TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'sent', 'failed', 'expired')),
+    attempts        SMALLINT NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at         TIMESTAMPTZ,
+    -- One alert per trip per subscription, however many times the processor sees it late.
+    UNIQUE (subscription_id, trip_id, service_date)
+);
+CREATE INDEX IF NOT EXISTS alerts_pending_idx ON alerts (created_at) WHERE status = 'pending';

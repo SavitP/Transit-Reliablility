@@ -88,3 +88,62 @@ def test_health_fails_when_pipeline_is_stale(client, db):
     assert client.get("/api/health").status_code == 503              # no data at all
     add_departures(db, "R1", [0], hours_ago=3)
     assert client.get("/api/health").json()["status"] == "stale"     # data, but 3 hours old
+
+
+# ---------- commute alert subscriptions ----------
+
+NEW_SUB = {"route_id": "R1", "stop_id": "S1", "days": [1, 2, 3, 4, 5],
+           "window_start": "07:00", "window_end": "09:00", "threshold_minutes": 10}
+
+
+@pytest.fixture
+def served(db):
+    db.execute("INSERT INTO route_stops VALUES ('R1', 'S1')")   # Route "7" stops at Pike St
+
+
+def test_create_view_and_delete_subscription(client, served):
+    response = client.post("/api/subscriptions", json=NEW_SUB)
+    assert response.status_code == 201
+    sub = response.json()
+    assert sub["route_name"] == "7" and sub["stop_name"] == "Pike St & 3rd Ave"
+    assert sub["topic"].startswith("transit-") and len(sub["topic"]) > 25   # long and random
+    assert sub["ntfy_url"] == f"https://ntfy.sh/{sub['topic']}"
+
+    assert client.get(f"/api/subscriptions/{sub['id']}").json()["days"] == [1, 2, 3, 4, 5]
+    assert client.delete(f"/api/subscriptions/{sub['id']}").status_code == 204
+    assert client.get(f"/api/subscriptions/{sub['id']}").status_code == 404
+
+
+def test_every_subscription_gets_its_own_topic(client, served):
+    a = client.post("/api/subscriptions", json=NEW_SUB).json()
+    b = client.post("/api/subscriptions", json=NEW_SUB).json()
+    assert a["topic"] != b["topic"] and a["id"] != b["id"]
+
+
+@pytest.mark.parametrize("change", [
+    {"stop_id": "NOWHERE"},                                   # route doesn't stop there
+    {"route_id": "R2"},                                       # route 44 doesn't serve S1
+    {"days": []}, {"days": [0]}, {"days": [8]}, {"days": [1, 1]},
+    {"window_start": "09:00", "window_end": "07:00"},
+    {"threshold_minutes": 1}, {"threshold_minutes": 500},
+])
+def test_invalid_subscriptions_are_rejected(client, served, change):
+    assert client.post("/api/subscriptions", json={**NEW_SUB, **change}).status_code == 422
+
+
+def test_bad_subscription_id_is_rejected(client):
+    assert client.get("/api/subscriptions/not-a-uuid").status_code == 422
+    assert client.get("/api/subscriptions/00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+def test_test_notification_is_queued_once_per_minute(client, db, served):
+    sub = client.post("/api/subscriptions", json=NEW_SUB).json()
+    assert client.post(f"/api/subscriptions/{sub['id']}/test").status_code == 202
+    assert client.post(f"/api/subscriptions/{sub['id']}/test").status_code == 429
+    title, status = db.execute("SELECT title, status FROM alerts").fetchone()
+    assert status == "pending" and title.startswith("Test alert")
+
+
+def test_route_and_stop_lookups_for_the_form(client, served):
+    assert client.get("/api/routes/R1/stops").json() == [{"stop_id": "S1", "name": "Pike St & 3rd Ave"}]
+    assert [r["short_name"] for r in client.get("/api/stops/S1/routes").json()] == ["7"]

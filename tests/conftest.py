@@ -56,6 +56,9 @@ def write_gtfs(path: Path, stop_times: list[tuple[str, str, int, str]]) -> Path:
                                         [["R1", "1", "Test Route"]]))
         z.writestr("stops.txt", to_csv(["stop_id", "stop_name", "stop_lat", "stop_lon"],
                                        [[s, f"Stop {s}", "47.6", "-122.3"] for s in stop_ids]))
+        trip_ids = sorted({row[0] for row in stop_times})
+        z.writestr("trips.txt", to_csv(["route_id", "trip_id", "trip_headsign"],
+                                       [["R1", t, "Downtown"] for t in trip_ids]))
         z.writestr("stop_times.txt", to_csv(
             ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence"],
             [[trip, t, t, stop, seq] for trip, t, seq, stop in stop_times]))
@@ -101,7 +104,7 @@ def db(db_url):
         # when things happen; a job running on its own schedule could collide with a test.
         conn.execute("SELECT alter_job(job_id, scheduled => false) "
                      "FROM timescaledb_information.jobs WHERE job_id >= 1000")
-        conn.execute("TRUNCATE stop_departures, routes, stops")
+        conn.execute("TRUNCATE stop_departures, alerts, subscriptions, route_stops, routes, stops")
         yield conn
 
 

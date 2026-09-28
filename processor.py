@@ -7,7 +7,9 @@ from datetime import timedelta
 
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, Consumer, TopicPartition
 
-from db import connect, create_schema, ensure_api_reader, load_reference_data, save_departures
+from alerts import AlertChecker
+from db import (connect, create_schema, ensure_api_reader, load_reference_data, load_subscriptions,
+                save_alerts, save_departures)
 from delays import DelayCalculator, matches_schedule
 from metrics import processor_metrics, serve_metrics
 from schedule import Schedule, ensure_schedule_downloaded
@@ -16,6 +18,7 @@ from stream import BOOTSTRAP_SERVERS, TOPIC, ensure_topic, stop_on_sigterm
 REWIND = timedelta(minutes=3)   # how far to re-read on startup, to rebuild memory of each bus
 METRICS = processor_metrics()
 STATUS_EVERY_SECONDS = 15   # also how often we update the "messages behind" measurement
+SUBSCRIPTIONS_EVERY_SECONDS = 60   # how often to pick up new/deleted alert subscriptions
 
 
 def main() -> None:
@@ -27,6 +30,7 @@ def main() -> None:
         ensure_api_reader(conn, os.environ["API_DB_PASSWORD"])
     load_reference_data(conn, schedule)
     calculator = DelayCalculator(schedule)
+    alert_checker = AlertChecker(schedule)
     ensure_topic()
 
     def rewind(consumer: Consumer, partitions: list[TopicPartition]) -> None:
@@ -61,6 +65,7 @@ def main() -> None:
     print("Waiting for vehicle reports. Ctrl+C to stop.", flush=True)
 
     processed, saved, last_status = 0, 0, time.time()
+    subscriptions_loaded_at = 0.0
     newest_report = 0   # bus report time of the newest message we've processed
     try:
         while True:
@@ -85,6 +90,12 @@ def main() -> None:
                 new_rows = save_departures(conn, rows)
             METRICS.departures_saved.inc(new_rows)
             saved += new_rows
+
+            if time.time() - subscriptions_loaded_at >= SUBSCRIPTIONS_EVERY_SECONDS:
+                alert_checker.set_subscriptions(load_subscriptions(conn))
+                subscriptions_loaded_at = time.time()
+            alerts = [a for row in rows for a in alert_checker.check(row, row["service_date"])]
+            METRICS.alerts_queued.inc(save_alerts(conn, alerts))
 
             if time.time() - last_status >= STATUS_EVERY_SECONDS:
                 behind = messages_behind(consumer)

@@ -57,3 +57,13 @@ def test_api_reader_can_read_but_not_write(db, db_url):
             reader.execute("DELETE FROM stop_departures")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             reader.execute("INSERT INTO routes VALUES ('X', 'X', 'X')")
+
+        # The one exception: riders' alert subscriptions (and queuing a test alert).
+        db.execute("INSERT INTO routes VALUES ('R1', '7', 'x')")
+        db.execute("INSERT INTO stops VALUES ('S3', 'Pike', 47.6, -122.3)")
+        sub = reader.execute("""INSERT INTO subscriptions (topic, route_id, stop_id, days, window_start, window_end)
+                                VALUES ('t', 'R1', 'S3', '{1}', '07:00', '09:00') RETURNING id""").fetchone()[0]
+        reader.execute("INSERT INTO alerts (subscription_id, title, message) VALUES (%s, 'hi', 'test')", (sub,))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            reader.execute("UPDATE alerts SET status = 'sent'")        # only the notifier does that
+        reader.execute("DELETE FROM subscriptions WHERE id = %s", (sub,))

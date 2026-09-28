@@ -46,6 +46,7 @@ def find_departures(schedule: Schedule, previous: dict, current: dict) -> list[d
         rows.append({
             "scheduled_departure": schedule.scheduled_departure(current["trip_id"], seq, current["service_date"]),
             "trip_id": current["trip_id"],
+            "service_date": current["service_date"],
             "stop_sequence": seq,
             "route_id": current["route_id"],
             "stop_id": stops[seq][0],

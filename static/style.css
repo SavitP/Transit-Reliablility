@@ -54,3 +54,21 @@ table.list th, table.list td { text-align: left; padding: 8px 6px; border-bottom
 table.list td.num, table.list th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pill { display: inline-block; min-width: 52px; text-align: center; padding: 1px 6px; border-radius: 10px;
         color: #fff; font-weight: 600; }
+
+/* ---------- alerts ---------- */
+a.button, button.button { display: inline-block; background: var(--accent); color: #fff; border: 0;
+  padding: 8px 14px; border-radius: 6px; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+button.small { font: inherit; font-size: 13px; padding: 2px 8px; border: 1px solid var(--line);
+  background: var(--card); color: var(--text); border-radius: 5px; cursor: pointer; }
+button.danger { font: inherit; padding: 6px 12px; border: 1px solid #b3261e; color: #b3261e;
+  background: transparent; border-radius: 6px; cursor: pointer; }
+.form { display: grid; gap: 16px; max-width: 520px; }
+.form label { display: grid; gap: 6px; }
+.form label.inline, .inline { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
+.form select, .form input[type=time] { font: inherit; padding: 6px 8px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--card); color: var(--text); max-width: 100%; }
+.form fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.ok { background: #dff3e8; color: #0b4d36; padding: 8px 12px; border-radius: 6px; }
+.steps li { margin-bottom: 12px; }
+code.topic { background: var(--card); border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px;
+  word-break: break-all; }

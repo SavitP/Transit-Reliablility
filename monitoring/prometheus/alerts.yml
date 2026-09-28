@@ -33,3 +33,16 @@ groups:
         for: 15m
         annotations:
           summary: "Only {{ $value | humanizePercentage }} of buses match the schedule"
+
+      - alert: NotificationsFailing
+        # Riders' alerts are being retried or given up on: ntfy is down, or rejecting us.
+        expr: sum(increase(transit_notifications_total{result=~"retry|failed"}[15m])) > 5
+        for: 5m
+        annotations:
+          summary: "{{ $value }} notification failures in 15 minutes"
+
+      - alert: NtfyRateLimited
+        # ntfy.sh allows our server ~250 messages/day. Hitting the limit means riders miss alerts.
+        expr: increase(transit_ntfy_rate_limited_total[1h]) > 0
+        annotations:
+          summary: "ntfy is rate-limiting us; alerts are delayed"

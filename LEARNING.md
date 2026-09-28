@@ -424,3 +424,60 @@ by itself. Checked from outside: HTTPS works, `/api/health` is ok, and every por
 brings services back). The Mac is only for writing code: push → CI tests and builds →
 `./deploy/update.sh` on the server. CI also checks the Caddyfile, since a broken one would
 take the whole site offline.
+
+## Phase 10: Commute alerts
+
+**What we built:**
+- Riders pick a route, their stop, days, a time window, and a "late by" threshold on the website
+  (🔔 buttons on route and stop pages, and a "My alerts" page). No accounts: each alert has a
+  secret id (its link) and a secret ntfy topic.
+- `alerts.py` (`AlertChecker`): decides, for every new stop departure, whether a subscribed
+  rider should be told.
+- `notifier.py`: a new service that sends queued alerts to ntfy, with retries, expiry, and
+  rate-limit handling.
+- New tables `route_stops`, `subscriptions`, `alerts`. The API's database user can now create and
+  delete subscriptions (and queue a test alert), but still can't touch any collected data.
+- Metrics and Grafana panels for alerts, plus two new Prometheus alerts (`NotificationsFailing`,
+  `NtfyRateLimited`).
+- Tested end to end against a private ntfy server with **live** data: 3 buses that were really
+  10–13 minutes late produced correct alerts within 81 seconds.
+
+**How data flows:**
+
+```
+rider ──website──▶ POST /api/subscriptions ──▶ subscriptions table
+                                                   │ (processor reloads every 60s)
+bus reports ─▶ processor: DelayCalculator ─▶ stop departure ─▶ AlertChecker
+                                                                 │ late enough, twice? stop still ahead?
+                                                                 │ scheduled there inside the rider's window?
+                                                                 ▼
+                                              alerts table (status 'pending')   ← the "outbox"
+                                                                 │ notifier, every 5s
+                                                                 ▼
+                                                   ntfy.sh ──push──▶ rider's phone
+```
+
+**Key ideas:**
+- **Predict, don't report:** the alert fires from how late the bus is *now*, several stops before
+  the rider's stop, so they hear before it arrives. Expected time = scheduled time + current delay.
+- **Confirm before alerting:** one late reading could be a glitch; we need two *separate*
+  observations (stops skipped in one jump share one measurement and don't count twice).
+- **Don't spam:** at most one alert per trip (a UNIQUE rule in the table) and one per
+  subscription per 30 minutes. A late bus is checked every 30 seconds, and a rider wants one message.
+- **Outbox pattern:** the processor only *writes down* "send this". A separate notifier sends it
+  and records the result. If ntfy is slow or down, the processor isn't affected and nothing is
+  lost. Retries happen later, stale alerts expire, and `FOR UPDATE SKIP LOCKED` stops two notifiers
+  from sending the same row. Delivery is "at least once": a crash between sending and saving
+  could, rarely, send twice.
+- **Secrets without accounts:** an unguessable id or topic works like a password. Anyone who
+  has it can use it, so it has to be long and random, and kept private.
+- **Know your limits:** ntfy.sh allows our server ~250 messages a day *in total*, shared by every
+  rider. That's why we have the subscription cap, the cooldown, the 429 back-off, and a metric that
+  shows when we hit the limit.
+
+**Gotchas found while building:**
+- The notifier started before the processor had created its table and crashed in a loop. Fix:
+  wait for the table instead of crashing (creating tables from two programs at once can collide).
+- A setting given only for one command (`NTFY_URL=...`) is gone for the next one. A restart
+  quietly switched the test notifier back to the public ntfy.sh. Always check where a service
+  points (`printenv`) before sending anything real.

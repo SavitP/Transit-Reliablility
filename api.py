@@ -5,10 +5,14 @@ Then open http://localhost:8000 (website) or http://localhost:8000/docs (API exp
 """
 
 import os
+import secrets
 from contextlib import asynccontextmanager
+from datetime import time
+from uuid import UUID
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Response
+from pydantic import BaseModel, Field, model_validator
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -198,6 +202,108 @@ def worst_routes(days: int = Query(7, ge=1, le=90), limit: int = Query(15, ge=1,
         ORDER BY pct_on_time
         LIMIT %(limit)s
     """, {"days": days, "limit": limit})
+
+
+# ---------------------------------------------------------------------------
+# Commute alerts
+# ---------------------------------------------------------------------------
+
+NTFY_URL = os.environ.get("NTFY_URL", "https://ntfy.sh")
+MAX_SUBSCRIPTIONS = 500  # ntfy.sh allows our server ~250 messages/day in total; stay modest
+
+
+@app.get("/api/routes/{route_id}/stops")
+def route_stops(route_id: str):
+    """Every stop this route serves (from the schedule), for the alert sign-up form."""
+    return query("""SELECT s.stop_id, s.name FROM route_stops rs JOIN stops s USING (stop_id)
+                    WHERE rs.route_id = %(id)s ORDER BY s.name""", {"id": route_id})
+
+
+@app.get("/api/stops/{stop_id}/routes")
+def stop_routes(stop_id: str):
+    """Every route that serves this stop (from the schedule)."""
+    return query("""SELECT r.route_id, r.short_name, r.description
+                    FROM route_stops rs JOIN routes r USING (route_id)
+                    WHERE rs.stop_id = %(id)s ORDER BY length(r.short_name), r.short_name""",
+                 {"id": stop_id})
+
+
+class NewSubscription(BaseModel):
+    """What the sign-up form sends. FastAPI rejects anything that doesn't match (422)."""
+    route_id: str = Field(max_length=20)
+    stop_id: str = Field(max_length=20)
+    days: list[int] = Field(min_length=1, max_length=7)              # 1 = Monday ... 7 = Sunday
+    window_start: time
+    window_end: time
+    threshold_minutes: int = Field(10, ge=3, le=60)
+
+    @model_validator(mode="after")
+    def check(self):
+        if any(d < 1 or d > 7 for d in self.days) or len(set(self.days)) != len(self.days):
+            raise ValueError("days must be distinct numbers from 1 (Monday) to 7 (Sunday)")
+        if self.window_start >= self.window_end:
+            raise ValueError("window_start must be before window_end")
+        return self
+
+
+def subscription_details(sub_id: UUID) -> dict:
+    rows = query("""
+        SELECT s.id, s.topic, s.route_id, r.short_name AS route_name, s.stop_id, st.name AS stop_name,
+               s.days, s.window_start, s.window_end, s.threshold_minutes, s.created_at
+        FROM subscriptions s JOIN routes r USING (route_id) JOIN stops st USING (stop_id)
+        WHERE s.id = %(id)s""", {"id": sub_id})
+    if not rows:
+        raise HTTPException(status_code=404, detail="No such alert (it may have been deleted)")
+    sub = rows[0]
+    sub["ntfy_url"] = f"{NTFY_URL}/{sub['topic']}"
+    sub["recent_alerts"] = query("""
+        SELECT title, message, status, created_at, sent_at FROM alerts
+        WHERE subscription_id = %(id)s ORDER BY created_at DESC LIMIT 10""", {"id": sub_id})
+    return sub
+
+
+@app.post("/api/subscriptions", status_code=201)
+def create_subscription(new: NewSubscription):
+    if not query("SELECT 1 FROM route_stops WHERE route_id = %(r)s AND stop_id = %(s)s",
+                 {"r": new.route_id, "s": new.stop_id}):
+        raise HTTPException(status_code=422, detail="That route doesn't stop there")
+    if query("SELECT count(*) AS n FROM subscriptions")[0]["n"] >= MAX_SUBSCRIPTIONS:
+        raise HTTPException(status_code=503, detail="Alert sign-ups are full right now")
+    # The topic is where ntfy delivers this rider's alerts. Anyone who knows it can read them,
+    # so it's random and long: effectively a password.
+    topic = "transit-" + secrets.token_urlsafe(18)
+    sub_id = query("""
+        INSERT INTO subscriptions (topic, route_id, stop_id, days, window_start, window_end, threshold_minutes)
+        VALUES (%(topic)s, %(route_id)s, %(stop_id)s, %(days)s, %(window_start)s, %(window_end)s,
+                %(threshold_minutes)s)
+        RETURNING id""", {"topic": topic, **new.model_dump(), "days": sorted(new.days)})[0]["id"]
+    return subscription_details(sub_id)
+
+
+@app.get("/api/subscriptions/{sub_id}")
+def get_subscription(sub_id: UUID):
+    return subscription_details(sub_id)
+
+
+@app.delete("/api/subscriptions/{sub_id}", status_code=204)
+def delete_subscription(sub_id: UUID):
+    query("DELETE FROM subscriptions WHERE id = %(id)s RETURNING id", {"id": sub_id})
+
+
+@app.post("/api/subscriptions/{sub_id}/test", status_code=202)
+def send_test_notification(sub_id: UUID):
+    """Queue a test message so the rider can check their phone is set up."""
+    sub = subscription_details(sub_id)
+    recent = query("""SELECT 1 FROM alerts WHERE subscription_id = %(id)s AND trip_id IS NULL
+                      AND created_at > now() - INTERVAL '1 minute'""", {"id": sub_id})
+    if recent:
+        raise HTTPException(status_code=429, detail="One test per minute, please")
+    query("""INSERT INTO alerts (subscription_id, title, message) VALUES (%(id)s, %(title)s, %(message)s)
+             RETURNING id""",
+          {"id": sub_id, "title": "Test alert: you're all set",
+           "message": f"You'll hear from us when Route {sub['route_name']} at {sub['stop_name']} "
+                      f"is running {sub['threshold_minutes']}+ minutes late."})
+    return {"status": "queued"}
 
 
 # Everything that isn't /api/... is a file from the static/ folder (the website).

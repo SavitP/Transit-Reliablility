@@ -50,9 +50,22 @@ def processor_metrics() -> SimpleNamespace:
             "Bus report time of the newest message processed (Unix time)"),
         messages_behind=Gauge(
             "transit_processor_messages_behind", "Messages waiting in Redpanda that we haven't read yet"),
+        alerts_queued=Counter(
+            "transit_alerts_queued_total", "Delay alerts handed to the notifier"),
         db_write_seconds=Histogram(
             "transit_db_write_seconds", "Time to save one batch of departures",
             buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5]),
+    )
+
+
+def notifier_metrics() -> SimpleNamespace:
+    notifications = Counter("transit_notifications_total", "Alerts the notifier finished with", ["result"])
+    for result in ("sent", "failed", "expired", "retry"):
+        notifications.labels(result=result)
+    return SimpleNamespace(
+        notifications=notifications,
+        pending=Gauge("transit_notifications_pending", "Alerts waiting to be sent"),
+        rate_limited=Counter("transit_ntfy_rate_limited_total", "Times ntfy told us to slow down"),
     )
 
 
