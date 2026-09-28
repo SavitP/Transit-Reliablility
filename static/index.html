@@ -3,24 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Metro Reliability</title>
+  <title>Transit Reliability: how late are Metro buses?</title>
+  <meta name="description" content="On-time performance for every King County Metro route and stop, measured from live bus positions.">
+  <link rel="preload" href="fonts/overpass-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <a href="#/" class="brand">Metro Reliability</a>
-    <nav><a href="#/">Search</a> <a href="#/worst">Worst routes</a> <a href="#/alerts">My alerts</a></nav>
+  <header class="masthead">
+    <a href="#/" class="wordmark">Transit Reliability</a>
+    <nav aria-label="Main">
+      <a href="#/worst">Least reliable</a>
+      <a href="#/alerts">My alerts</a>
+    </nav>
   </header>
 
-  <div class="search">
-    <input id="search" type="search" placeholder="Route number or stop name, e.g. 7 or Pike St"
-           autocomplete="off" aria-label="Search routes and stops">
+  <div class="search" role="search">
+    <label for="search" class="visually-hidden">Find a route or stop</label>
+    <input id="search" type="search" placeholder="Find a route or stop, like 7 or Pike St"
+           autocomplete="off">
     <div id="results" class="results" hidden></div>
   </div>
 
   <main id="page"></main>
 
-  <footer>King County Metro data. "On time" = no more than 1 min early or 5 min late.</footer>
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+
+  <footer>
+    <p>Measured from King County Metro's live bus positions, every 30 seconds.
+      On time means no more than 1 minute early or 5 minutes late.
+      Not affiliated with King County Metro.</p>
+  </footer>
   <script src="app.js"></script>
 </body>
 </html>

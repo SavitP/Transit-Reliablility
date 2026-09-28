@@ -71,11 +71,14 @@ def test_worst_routes_ranks_least_on_time_first(client, db):
     ranking = client.get("/api/worst-routes").json()
     assert [r["short_name"] for r in ranking] == ["44", "7"]
     assert ranking[0]["pct_on_time"] == 40.0
+    # Metro-wide baseline: 140 of 200 departures on time.
+    assert client.get("/api/network").json()["pct_on_time"] == 70.0
+    assert client.get("/api/routes/R1").json()["network_pct_on_time"] == 70.0
 
 
 def test_website_is_served(client):
     response = client.get("/")
-    assert response.status_code == 200 and "Metro Reliability" in response.text
+    assert response.status_code == 200 and "Transit Reliability" in response.text
 
 
 def test_health_ok_when_departures_are_recent(client, db):
@@ -147,3 +150,10 @@ def test_test_notification_is_queued_once_per_minute(client, db, served):
 def test_route_and_stop_lookups_for_the_form(client, served):
     assert client.get("/api/routes/R1/stops").json() == [{"stop_id": "S1", "name": "Pike St & 3rd Ave"}]
     assert [r["short_name"] for r in client.get("/api/stops/S1/routes").json()] == ["7"]
+
+
+def test_website_files_are_revalidated_but_api_is_not_affected(client):
+    assert client.get("/app.js").headers["cache-control"] == "no-cache"
+    etag = client.get("/app.js").headers["etag"]
+    assert client.get("/app.js", headers={"If-None-Match": etag}).status_code == 304   # cheap re-check
+    assert "cache-control" not in client.get("/api/health").headers

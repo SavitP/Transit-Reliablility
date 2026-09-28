@@ -4,6 +4,7 @@ Run locally:  uvicorn api:app --reload
 Then open http://localhost:8000 (website) or http://localhost:8000/docs (API explorer).
 """
 
+import mimetypes
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -133,6 +134,19 @@ def health(response: Response):
     return {"status": "ok", "newest_departure_age_seconds": round(age)}
 
 
+def network_on_time(days: int) -> float | None:
+    """On-time percentage across every Metro route: the baseline each route is compared with.
+    Reads the hourly summary, so it's fast (finished hours only)."""
+    return query("""SELECT round(100.0 * sum(on_time) / nullif(sum(departures), 0), 1) AS pct
+                    FROM route_hourly WHERE hour > now() - make_interval(days => %(days)s)""",
+                 {"days": days})[0]["pct"]
+
+
+@app.get("/api/network")
+def network(days: int = Query(7, ge=1, le=90)):
+    return {"days": days, "pct_on_time": network_on_time(days)}
+
+
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=50)):
     """Find routes and stops matching what the user typed."""
@@ -159,7 +173,7 @@ def route_reliability(route_id: str, days: int = Query(7, ge=1, le=90)):
     if not route:
         raise HTTPException(status_code=404, detail="No such route")
     stats = reliability("route_id = %(id)s", {"id": route_id, "days": days})
-    return {**route[0], "days": days, **stats}
+    return {**route[0], "days": days, "network_pct_on_time": network_on_time(days), **stats}
 
 
 @app.get("/api/stops/{stop_id}")
@@ -179,7 +193,7 @@ def stop_reliability(stop_id: str, days: int = Query(7, ge=1, le=90)):
         GROUP BY r.route_id, r.short_name
         ORDER BY pct_on_time
     """, params)
-    return {**stop[0], "days": days, **stats}
+    return {**stop[0], "days": days, "network_pct_on_time": network_on_time(days), **stats}
 
 
 @app.get("/api/worst-routes")
@@ -306,6 +320,18 @@ def send_test_notification(sub_id: UUID):
     return {"status": "queued"}
 
 
+@app.middleware("http")
+async def revalidate_website_files(request, call_next):
+    """Tell browsers to check for a newer copy of the website's files on each visit.
+    Without this, a browser can keep using yesterday's app.js after a deploy. When nothing
+    changed, the check is a tiny "304 Not Modified" reply, so it stays fast."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 # Everything that isn't /api/... is a file from the static/ folder (the website).
+mimetypes.add_type("font/woff2", ".woff2")   # so fonts are served with their proper type
 # This goes last so it doesn't swallow the API routes above.
 app.mount("/", StaticFiles(directory="static", html=True), name="website")
