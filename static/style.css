@@ -35,11 +35,13 @@
   --late: #e34948;
   --neutral: #e3e7ea;      /* diverging midpoint: about the same as Metro-wide */
   --track: #e3e8ec;
-  /* diverging scale for "compared with Metro overall": both arms step away from the gray midpoint */
-  --better-1: color-mix(in oklab, var(--on-time) 45%, var(--neutral));
-  --better-2: var(--on-time);
-  --worse-1: color-mix(in oklab, var(--late) 45%, var(--neutral));
-  --worse-2: var(--late);
+  /* red-to-green on-time scale (grid, column bars, ranking bars): dark red -> light yellow -> dark green,
+     so neighbouring steps also differ in lightness */
+  --rg-1: #b3261e;   /* under 50% */
+  --rg-2: #e8703a;   /* 50-65% */
+  --rg-3: #f2c14e;   /* 65-80% */
+  --rg-4: #8cc665;   /* 80-90% */
+  --rg-5: #2e7d32;   /* 90%+ */
 
   --ok-bg: #e2f0e8; --ok-ink: #0b4d36;
   --warn-bg: #fdf1d6; --warn-ink: #5c4400;
@@ -67,6 +69,11 @@
     --early: #c98500;
     --late: #e66767;
     --neutral: #333b42;
+    --rg-1: #e0524a;
+    --rg-2: #ef8a4f;
+    --rg-3: #f2c14e;
+    --rg-4: #93cf6b;
+    --rg-5: #43a047;
     --track: #252e35;
     --ok-bg: #173a2b; --ok-ink: #b9e7cc;
     --warn-bg: #3a2f14; --warn-ink: #f3dca0;

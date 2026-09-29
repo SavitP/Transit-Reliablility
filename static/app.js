@@ -107,10 +107,13 @@ function verdict(data, what) {
   const net = data.network_pct_on_time;
   let comparison = "";
   if (net != null && data.pct_on_time != null) {
-    const gap = Math.round(data.pct_on_time - net);
-    comparison = Math.abs(gap) < 3
-      ? `That's about the same as Metro overall (${fmtPct(net)}).`
-      : `Metro overall: ${fmtPct(net)}, so this ${what} is ${Math.abs(gap)} points ${gap < 0 ? "worse" : "better"}.`;
+    const gap = data.pct_on_time - net;
+    const where = `for Metro, where buses are on time ${fmtPct(net)} of the time`;
+    comparison = Math.abs(gap) < 3 ? `That's about average ${where}.`
+      : gap <= -10 ? `That's well below average ${where}.`
+      : gap < 0 ? `That's below average ${where}.`
+      : gap >= 10 ? `That's well above average ${where}.`
+      : `That's above average ${where}.`;
   }
   return `
     <div class="verdict">
@@ -134,10 +137,10 @@ function verdict(data, what) {
     </div>`;
 }
 
-// Column chart of on-time % (one hue; the height carries the value), with Metro-wide as a dashed line.
+// Column chart of on-time %: height and color both show it; Metro's average is a dashed line.
 function columns(items, label, tipTitle, net, extraClass = "") {
   return `
-    ${net != null ? `<div class="chart-key"><span class="dash"></span>Metro overall, ${fmtPct(net)} on time</div>` : ""}
+    ${net != null ? `<div class="chart-key"><span class="dash"></span>Average for all Metro buses: ${fmtPct(net)} on time</div>` : ""}
     <div class="chart ${extraClass}">
       <div class="plot">
         <div class="gridline" style="top:0"><span>100%</span></div>
@@ -146,7 +149,7 @@ function columns(items, label, tipTitle, net, extraClass = "") {
           <div class="col ${i.departures ? "" : "none"}" data-tip="${esc(i.departures
               ? `<b>${tipTitle(i)}</b><br>${fmtPct(i.pct_on_time)} on time<br>${plural(i.departures, "departure")}`
               : `<b>${tipTitle(i)}</b><br>No departures measured`)}">
-            <i style="height:${i.pct_on_time ?? 0}%"></i></div>`).join("")}
+            <i style="height:${i.pct_on_time ?? 0}%; background:${stepFor(i.pct_on_time).css}"></i></div>`).join("")}
         </div>
         ${net != null ? `<div class="refline" style="bottom:${net}%"></div>` : ""}
       </div>
@@ -154,19 +157,19 @@ function columns(items, label, tipTitle, net, extraClass = "") {
     </div>`;
 }
 
-// Day × hour grid, colored by how each hour compares with Metro overall.
-// Diverging scale: blue = better, red = worse, gray midpoint = about the same.
-const COMPARE_STEPS = [
-  { max: -15, css: "var(--worse-2)", label: "15+ points worse" },
-  { max: -5, css: "var(--worse-1)", label: "5–15 points worse" },
-  { max: 5, css: "var(--neutral)", label: "About the same" },
-  { max: 15, css: "var(--better-1)", label: "5–15 points better" },
-  { max: Infinity, css: "var(--better-2)", label: "15+ points better" },
+// One red-to-green scale for every chart: how often buses were on time.
+// The steps also get lighter toward the middle, so they differ in lightness, not only hue
+// (red and green alone look alike to many colorblind people).
+const ON_TIME_STEPS = [
+  { below: 50, css: "var(--rg-1)", label: "Under 50% on time" },
+  { below: 65, css: "var(--rg-2)", label: "50–65%" },
+  { below: 80, css: "var(--rg-3)", label: "65–80%" },
+  { below: 90, css: "var(--rg-4)", label: "80–90%" },
+  { below: Infinity, css: "var(--rg-5)", label: "90% or more" },
 ];
-const compareStep = diff => COMPARE_STEPS.find(s => diff < s.max) ?? COMPARE_STEPS[4];
+const stepFor = pct => (pct == null ? { css: "var(--track)" } : ON_TIME_STEPS.find(s => pct < s.below));
 
-function grid(cells, net) {
-  const baseline = net ?? 75;
+function grid(cells) {
   const lookup = Object.fromEntries(cells.map(c => [`${c.day}-${c.hour}`, c]));
   const hours = [...Array(24).keys()];
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -174,7 +177,7 @@ function grid(cells, net) {
     <tr><th scope="row">${day}</th>${hours.map(h => {
       const c = lookup[`${day}-${h}`];
       if (!c) return `<td></td>`;
-      return `<td class="has" style="background:${compareStep(c.pct_on_time - baseline).css}"
+      return `<td class="has" style="background:${stepFor(c.pct_on_time).css}"
         data-tip="${esc(`<b>${day} ${fmtHour(h)}</b><br>${fmtPct(c.pct_on_time)} on time<br>${plural(c.departures, "departure")}`)}"></td>`;
     }).join("")}</tr>`).join("");
   const tableRows = cells.slice()
@@ -182,13 +185,13 @@ function grid(cells, net) {
     .map(c => `<tr><td>${c.day}</td><td>${fmtHour(c.hour)}</td><td class="num">${c.departures}</td>
                <td class="num">${fmtPct(c.pct_on_time)}</td></tr>`).join("");
   return `
-    <p class="note">Each square is one hour of one weekday, compared with Metro overall
-      (${fmtPct(baseline)} on time${net == null ? ", a typical figure while data builds up" : ""}).</p>
+    <p class="note">Each square is one hour of one weekday, colored by how often buses were on time.
+      Point at a square for the exact numbers.</p>
     <div class="scroll"><table class="grid">
       <thead><tr><th></th>${hours.map(h => `<th>${h % 3 === 0 ? shortHour(h) : ""}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div class="legend">${COMPARE_STEPS.map(s =>
+    <div class="legend">${ON_TIME_STEPS.map(s =>
       `<span><i class="swatch" style="background:${s.css}"></i>${s.label}</span>`).join("")}
       <span><i class="swatch" style="background:var(--track)"></i>No data</span></div>
     <details class="table-view"><summary>Show these numbers as a table</summary>
@@ -198,7 +201,7 @@ function grid(cells, net) {
 
 function meter(pct, net) {
   return `<div class="meter"><div class="track">
-      <div class="fill" style="width:${pct ?? 0}%"></div>
+      <div class="fill" style="width:${pct ?? 0}%; background:${stepFor(pct).css}"></div>
       ${net != null ? `<div class="tick" style="left:${net}%"></div>` : ""}
     </div><b>${fmtPct(pct)}</b></div>`;
 }
@@ -218,7 +221,7 @@ function reliabilityView(data, what) {
       <h2>By day of the week</h2>
       ${columns(data.by_day, i => i.day, i => i.day, net, "hours")}
       <h2>Every hour of the week</h2>
-      ${grid(data.grid, net)}` : ""}`;
+      ${grid(data.grid)}` : ""}`;
 }
 
 // ---------- pages ----------
@@ -254,7 +257,7 @@ async function homePage() {
         <td>${chip(r)}</td><td class="desc wide">${esc(r.description || "")}</td>
         <td>${meter(r.pct_on_time, net)}</td><td class="num">${fmtPct(r.pct_late)}</td></tr>`).join("")}
       </tbody></table>
-    <p class="note">${net != null ? `The small mark on each bar is Metro overall (${fmtPct(net)}). ` : ""}
+    <p class="note">${net != null ? `The small mark on each bar is the average for all Metro buses (${fmtPct(net)}). ` : ""}
       <a href="#/worst">See all routes, ranked</a></p>`
     : `<p class="note">Not enough departures measured yet. Check back in an hour.</p>`;
 
@@ -346,7 +349,7 @@ async function worstPage() {
         <td class="num wide">${r.avg_delay_min} min</td>
         <td class="num wide">${Number(r.departures).toLocaleString()}</td>
       </tr>`).join("")}</tbody></table>
-      ${net != null ? `<p class="note">The small mark on each bar is Metro overall: ${fmtPct(net)} on time.</p>` : ""}`
+      ${net != null ? `<p class="note">The small mark on each bar is the average for all Metro buses: ${fmtPct(net)} on time.</p>` : ""}`
     : `<p class="warn">Not enough departures measured in ${periodName()} yet. Try a longer period.</p>`}`;
 }
 
